@@ -439,6 +439,77 @@ const EFFECT_DEFS = {
   },
 };
 
+// ─── Editable Value (click to type a number) ────────────────────────────────
+function EditableValue({ value, min, max, step, onChange, style = {} }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  const displayVal = step >= 1 ? value.toFixed(0) : step >= 0.1 ? value.toFixed(1) : step >= 0.01 ? value.toFixed(2) : value.toFixed(3);
+
+  const commit = () => {
+    const parsed = parseFloat(draft);
+    if (!isNaN(parsed)) {
+      const clamped = Math.max(min, Math.min(max, parsed));
+      const snapped = Math.round(clamped / step) * step;
+      onChange(snapped);
+    }
+    setEditing(false);
+  };
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        style={{
+          background: "#1a1a2e",
+          border: "1px solid #50c8a0",
+          borderRadius: 3,
+          color: "#e0e0f0",
+          fontFamily: "'JetBrains Mono', 'Space Mono', monospace",
+          fontSize: 10,
+          padding: "1px 3px",
+          width: 52,
+          textAlign: "center",
+          outline: "none",
+          ...style,
+        }}
+      />
+    );
+  }
+
+  return (
+    <span
+      onClick={() => { setDraft(displayVal); setEditing(true); }}
+      style={{
+        fontSize: 10,
+        color: "#c0c0e0",
+        fontFamily: "'JetBrains Mono', 'Space Mono', monospace",
+        cursor: "text",
+        borderBottom: "1px dashed #3a3a5c",
+        ...style,
+      }}
+      title="Click to edit"
+    >
+      {displayVal}
+    </span>
+  );
+}
+
 // ─── Knob Component ──────────────────────────────────────────────────────────
 function Knob({ value, min, max, step, label, onChange, size = 48 }) {
   const knobRef = useRef(null);
@@ -522,7 +593,7 @@ function Knob({ value, min, max, step, label, onChange, size = 48 }) {
         </svg>
       </div>
       <span style={{ fontSize: 9, color: "#8888aa", textAlign: "center", lineHeight: 1.1, maxWidth: size + 10 }}>{label}</span>
-      <span style={{ fontSize: 10, color: "#c0c0e0", fontFamily: "'JetBrains Mono', monospace", marginTop: -2 }}>{displayVal}</span>
+      <EditableValue value={value} min={min} max={max} step={step} onChange={onChange} style={{ marginTop: -2 }} />
     </div>
   );
 }
@@ -549,9 +620,15 @@ function GraphicEQPanel({ params, onChange }) {
             }}
           />
           <span style={{ fontSize: 8, color: "#8888aa" }}>{f}</span>
-          <span style={{ fontSize: 8, color: "#b0b0d0", fontFamily: "monospace" }}>
-            {params.gains[i] > 0 ? "+" : ""}{params.gains[i].toFixed(1)}
-          </span>
+          <EditableValue
+            value={params.gains[i]} min={-12} max={12} step={0.5}
+            onChange={(v) => {
+              const g = [...params.gains];
+              g[i] = v;
+              onChange({ ...params, gains: g });
+            }}
+            style={{ fontSize: 8 }}
+          />
         </div>
       ))}
     </div>
@@ -1004,6 +1081,64 @@ function SpeedSelect({ speed, setSpeed }) {
   );
 }
 
+function ViewWindowValue({ viewWindow, setViewWindow, SAMPLE_RATE }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  const sec = viewWindow / SAMPLE_RATE;
+  const display = sec >= 1 ? sec.toFixed(2) + "s"
+    : sec >= 0.001 ? (sec * 1000).toFixed(1) + "ms"
+    : (sec * 1000000).toFixed(0) + "µs";
+
+  const commit = () => {
+    const text = draft.trim().toLowerCase();
+    let seconds;
+    if (text.endsWith("ms")) seconds = parseFloat(text) / 1000;
+    else if (text.endsWith("µs") || text.endsWith("us")) seconds = parseFloat(text) / 1000000;
+    else if (text.endsWith("s")) seconds = parseFloat(text);
+    else seconds = parseFloat(text) / 1000; // default to ms
+    if (!isNaN(seconds) && seconds > 0) {
+      const samples = Math.max(10, Math.min(SAMPLE_RATE * 4, Math.round(seconds * SAMPLE_RATE)));
+      setViewWindow(samples);
+    }
+    setEditing(false);
+  };
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  if (editing) {
+    return (
+      <input ref={inputRef} value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+        placeholder="e.g. 20ms"
+        style={{
+          background: "#1a1a2e", border: "1px solid #50c8a0", borderRadius: 3,
+          color: "#e0e0f0", fontFamily: "'Space Mono', monospace", fontSize: 10,
+          padding: "1px 3px", width: 65, textAlign: "right", outline: "none",
+        }}
+      />
+    );
+  }
+
+  return (
+    <span onClick={() => { setDraft(display); setEditing(true); }}
+      style={{
+        fontSize: 10, color: "#8888aa", fontFamily: "monospace", minWidth: 70,
+        textAlign: "right", cursor: "text", borderBottom: "1px dashed #3a3a5c",
+      }}
+      title="Click to edit (e.g. 20ms, 1s, 500µs)"
+    >{display}</span>
+  );
+}
+
 // ─── Main App ────────────────────────────────────────────────────────────────
 export default function SignalLab() {
   const [signalType, setSignalType] = useState("sine");
@@ -1425,9 +1560,12 @@ export default function SignalLab() {
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 10, color: "#6a6a8a" }}>🔉</span>
             <VolumeSlider volume={volume} setVolume={setVolume} />
-            <span style={{ fontSize: 9, color: "#8888aa", fontFamily: "monospace", minWidth: 28 }}>
-              {Math.round(volume * 100)}%
-            </span>
+            <EditableValue
+              value={Math.round(volume * 100)} min={0} max={100} step={1}
+              onChange={(v) => setVolume(v / 100)}
+              style={{ fontSize: 9, color: "#8888aa", minWidth: 28 }}
+            />
+            <span style={{ fontSize: 9, color: "#6a6a8a" }}>%</span>
           </div>
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -1520,13 +1658,7 @@ export default function SignalLab() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <ViewWindowSlider viewWindow={viewWindow} setViewWindow={setViewWindow} SAMPLE_RATE={SAMPLE_RATE} />
-              <span style={{ fontSize: 10, color: "#8888aa", fontFamily: "monospace", minWidth: 70, textAlign: "right" }}>
-                {viewWindow / SAMPLE_RATE >= 1
-                  ? (viewWindow / SAMPLE_RATE).toFixed(2) + "s"
-                  : viewWindow / SAMPLE_RATE >= 0.001
-                    ? (viewWindow / SAMPLE_RATE * 1000).toFixed(1) + "ms"
-                    : (viewWindow / SAMPLE_RATE * 1000000).toFixed(0) + "µs"}
-              </span>
+              <ViewWindowValue viewWindow={viewWindow} setViewWindow={setViewWindow} SAMPLE_RATE={SAMPLE_RATE} />
             </div>
           </div>
 
