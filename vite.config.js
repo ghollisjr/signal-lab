@@ -6,4 +6,13 @@ export default defineConfig(({ command }) => ({
   // For local dev, use '/'. For GitHub Pages, use '/REPO_NAME/'
   // Replace 'signal-lab' with your actual GitHub repository name
   base: command === 'serve' ? '/' : '/signal-lab/',
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
+    },
+  },
 }))
