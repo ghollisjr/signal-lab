@@ -1141,9 +1141,9 @@ function ViewWindowValue({ viewWindow, setViewWindow, SAMPLE_RATE }) {
 
 // ─── Main App ────────────────────────────────────────────────────────────────
 export default function SignalLab() {
-  const [signalType, setSignalType] = useState("sine");
-  const [frequency, setFrequency] = useState(220);
-  const [amplitude, setAmplitude] = useState(0.8);
+  const [signals, setSignals] = useState([
+    { id: Date.now(), type: "sine", frequency: 220, amplitude: 0.8, enabled: true, pcmData: null }
+  ]);
   const [isStereo, setIsStereo] = useState(false);
   const [stereoWidth, setStereoWidth] = useState(0.5);
   const [effects, setEffects] = useState([]);
@@ -1164,7 +1164,6 @@ export default function SignalLab() {
   const writeIdxRef = useRef(0);
   const timeRef = useRef(0);
   const effectStatesRef = useRef(new Map());
-  const pcmDataRef = useRef(null);
 
   // Audio playback refs - separate DSP state for real-time audio
   const audioCtxRef = useRef(null);
@@ -1173,17 +1172,13 @@ export default function SignalLab() {
   const audioEffectStatesRef = useRef(new Map());
   const audioGainRef = useRef(null);
   // Refs to share current config with audio callback
-  const signalTypeRef = useRef(signalType);
-  const frequencyRef = useRef(frequency);
-  const amplitudeRef = useRef(amplitude);
+  const signalsRef = useRef(signals);
   const effectsRef = useRef(effects);
   const isStereoRef = useRef(isStereo);
   const stereoWidthRef = useRef(stereoWidth);
 
   // Keep refs in sync with state
-  useEffect(() => { signalTypeRef.current = signalType; }, [signalType]);
-  useEffect(() => { frequencyRef.current = frequency; }, [frequency]);
-  useEffect(() => { amplitudeRef.current = amplitude; }, [amplitude]);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
   useEffect(() => { effectsRef.current = effects; }, [effects]);
   useEffect(() => { isStereoRef.current = isStereo; }, [isStereo]);
   useEffect(() => { stereoWidthRef.current = stereoWidth; }, [stereoWidth]);
@@ -1256,23 +1251,29 @@ export default function SignalLab() {
         const outL = e.outputBuffer.getChannelData(0);
         const outR = e.outputBuffer.getChannelData(1);
         const sr = ctx.sampleRate;
-        const sig = signalTypeRef.current;
-        const freq = frequencyRef.current;
-        const amp = amplitudeRef.current;
+        const sigs = signalsRef.current;
         const fx = effectsRef.current;
         const stereo = isStereoRef.current;
         const width = stereoWidthRef.current;
 
         for (let i = 0; i < bufSize; i++) {
           const t = audioTimeRef.current;
-          const dry = generators[sig] ? generators[sig](t, freq, pcmDataRef.current) * amp : 0;
+          let dry = 0;
+          let sR = 0;
+          for (const sig of sigs) {
+            if (!sig.enabled) continue;
+            const gen = generators[sig.type];
+            if (gen) {
+              dry += gen(t, sig.frequency, sig.pcmData) * sig.amplitude;
+              if (stereo) {
+                const phase = width * 0.01;
+                sR += gen(t + phase, sig.frequency, sig.pcmData) * sig.amplitude;
+              }
+            }
+          }
 
           let sL = dry;
-          let sR = dry;
-          if (stereo) {
-            const phase = width * 0.01;
-            sR = generators[sig] ? generators[sig](t + phase, freq, pcmDataRef.current) * amp : 0;
-          }
+          if (!stereo) sR = dry;
 
           for (const effect of fx) {
             if (!effect.enabled) continue;
@@ -1336,19 +1337,23 @@ export default function SignalLab() {
 
     for (let s = 0; s < numSamples; s++) {
       const t = s / SAMPLE_RATE;
-      const drySample = generators[signalType]
-        ? generators[signalType](t, frequency, pcmDataRef.current) * amplitude
-        : 0;
+      let drySample = 0;
+      let sR = 0;
+      for (const sig of signals) {
+        if (!sig.enabled) continue;
+        const gen = generators[sig.type];
+        if (gen) {
+          drySample += gen(t, sig.frequency, sig.pcmData) * sig.amplitude;
+          if (isStereo) {
+            const phase = stereoWidth * 0.01;
+            sR += gen(t + phase, sig.frequency, sig.pcmData) * sig.amplitude;
+          }
+        }
+      }
       dry[s] = drySample;
 
       let sL = drySample;
-      let sR = drySample;
-      if (isStereo) {
-        const phase = stereoWidth * 0.01;
-        sR = generators[signalType]
-          ? generators[signalType](t + phase, frequency, pcmDataRef.current) * amplitude
-          : 0;
-      }
+      if (!isStereo) sR = drySample;
 
       for (const effect of effects) {
         if (!effect.enabled) continue;
@@ -1369,7 +1374,7 @@ export default function SignalLab() {
     staticWetLRef.current = wetL;
     staticWetRRef.current = wetR;
     setStaticTick(t => t + 1);
-  }, [viewMode, viewWindow, signalType, frequency, amplitude, effects, isStereo, stereoWidth]);
+  }, [viewMode, viewWindow, signals, effects, isStereo, stereoWidth]);
 
   // Processing loop
   useEffect(() => {
@@ -1384,21 +1389,24 @@ export default function SignalLab() {
 
       for (let s = 0; s < samplesToGen; s++) {
         const t = timeRef.current;
-        const drySample = generators[signalType]
-          ? generators[signalType](t, frequency, pcmDataRef.current) * amplitude
-          : 0;
+        let drySample = 0;
+        let sampleR = 0;
+        for (const sig of signals) {
+          if (!sig.enabled) continue;
+          const gen = generators[sig.type];
+          if (gen) {
+            drySample += gen(t, sig.frequency, sig.pcmData) * sig.amplitude;
+            if (isStereo) {
+              const phase = stereoWidth * 0.01;
+              sampleR += gen(t + phase, sig.frequency, sig.pcmData) * sig.amplitude;
+            }
+          }
+        }
 
         dryBufferRef.current[writeIdxRef.current] = drySample;
 
-        // Generate stereo input
         let sampleL = drySample;
-        let sampleR = drySample;
-        if (isStereo) {
-          const phase = stereoWidth * 0.01;
-          sampleR = generators[signalType]
-            ? generators[signalType](t + phase, frequency, pcmDataRef.current) * amplitude
-            : 0;
-        }
+        if (!isStereo) sampleR = drySample;
 
         // Process effects chain
         for (const effect of effects) {
@@ -1428,7 +1436,7 @@ export default function SignalLab() {
 
     frameId = requestAnimationFrame(process);
     return () => cancelAnimationFrame(frameId);
-  }, [running, signalType, frequency, amplitude, effects, isStereo, stereoWidth, speed, getEffectState]);
+  }, [running, signals, effects, isStereo, stereoWidth, speed, getEffectState]);
 
   const addEffect = (type) => {
     const def = EFFECT_DEFS[type];
@@ -1463,15 +1471,34 @@ export default function SignalLab() {
     setEffects(prev => prev.map((e, i) => i === idx ? { ...e, enabled: !e.enabled } : e));
   };
 
-  const handlePCMUpload = (e) => {
+  const addSignal = () => {
+    setSignals(prev => [...prev, {
+      id: Date.now(),
+      type: "sine",
+      frequency: 220,
+      amplitude: 0.8,
+      enabled: true,
+      pcmData: null,
+    }]);
+  };
+
+  const removeSignal = (idx) => {
+    setSignals(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx));
+  };
+
+  const updateSignal = (idx, changes) => {
+    setSignals(prev => prev.map((s, i) => i === idx ? { ...s, ...changes } : s));
+  };
+
+  const handlePCMUpload = (signalIdx) => (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       ctx.decodeAudioData(ev.target.result, (buffer) => {
-        pcmDataRef.current = buffer.getChannelData(0);
-        setSignalType("pcm");
+        const pcmData = buffer.getChannelData(0);
+        updateSignal(signalIdx, { type: "pcm", pcmData });
         ctx.close();
       });
     };
@@ -1598,42 +1625,87 @@ export default function SignalLab() {
         }}>
           {/* Signal Section */}
           <div style={{ padding: "10px 12px", borderBottom: "1px solid #1a1a30" }}>
-            <div style={{ fontSize: 9, color: "#6a6a8a", letterSpacing: "0.15em", marginBottom: 8, fontWeight: 700 }}>
-              INPUT SIGNAL
-            </div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
-              {["sine", "square", "triangle", "sawtooth", "noise"].map(type => (
-                <button key={type} onClick={() => setSignalType(type)} style={{
-                  ...smallBtnStyle,
-                  background: signalType === type ? "#50c8a022" : "#1a1a2e",
-                  color: signalType === type ? "#50c8a0" : "#8888aa",
-                  border: `1px solid ${signalType === type ? "#50c8a044" : "#3a3a5c"}`,
-                  padding: "3px 8px",
-                  textTransform: "uppercase",
-                  fontSize: 9,
-                  letterSpacing: "0.05em",
-                }}>
-                  {type}
-                </button>
-              ))}
-              <label style={{
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginBottom: 8,
+            }}>
+              <span style={{ fontSize: 9, color: "#6a6a8a", letterSpacing: "0.15em", fontWeight: 700 }}>
+                INPUT SIGNALS ({signals.filter(s => s.enabled).length}/{signals.length})
+              </span>
+              <button onClick={addSignal} style={{
                 ...smallBtnStyle,
-                background: signalType === "pcm" ? "#50c8a022" : "#1a1a2e",
-                color: signalType === "pcm" ? "#50c8a0" : "#8888aa",
-                border: `1px solid ${signalType === "pcm" ? "#50c8a044" : "#3a3a5c"}`,
-                padding: "3px 8px",
-                textTransform: "uppercase",
-                fontSize: 9,
-                cursor: "pointer",
+                background: "#50c8a022",
+                color: "#50c8a0",
+                border: "1px solid #50c8a044",
+                padding: "3px 10px", fontSize: 10,
               }}>
-                PCM
-                <input type="file" accept="audio/*" onChange={handlePCMUpload} style={{ display: "none" }} />
-              </label>
+                + ADD SIGNAL
+              </button>
             </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
-              <Knob value={frequency} min={20} max={2000} step={1} label="Freq (Hz)" onChange={setFrequency} />
-              <Knob value={amplitude} min={0} max={1} step={0.01} label="Amplitude" onChange={setAmplitude} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+              {signals.map((sig, idx) => (
+                <div key={sig.id} style={{
+                  background: sig.enabled ? "#1a1a2e" : "#14141f",
+                  border: `1px solid ${sig.enabled ? "#3a3a5c" : "#2a2a3c"}`,
+                  borderRadius: 8, padding: "8px 10px",
+                  opacity: sig.enabled ? 1 : 0.5,
+                  transition: "all 0.2s",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+                    <span style={{ fontSize: 10, color: "#8888aa", fontWeight: 600, flex: 1 }}>
+                      Signal {idx + 1}
+                    </span>
+                    <button onClick={() => updateSignal(idx, { enabled: !sig.enabled })} style={{
+                      ...smallBtnStyle,
+                      background: sig.enabled ? "#50c8a044" : "#44444466",
+                      color: sig.enabled ? "#50c8a0" : "#888",
+                    }}>{sig.enabled ? "ON" : "OFF"}</button>
+                    <button onClick={() => removeSignal(idx)} disabled={signals.length <= 1} style={{
+                      ...smallBtnStyle, color: signals.length <= 1 ? "#4a4a6a" : "#ff6b8a",
+                      cursor: signals.length <= 1 ? "not-allowed" : "pointer",
+                    }}>✕</button>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+                    {["sine", "square", "triangle", "sawtooth", "noise"].map(type => (
+                      <button key={type} onClick={() => updateSignal(idx, { type })} style={{
+                        ...smallBtnStyle,
+                        background: sig.type === type ? "#50c8a022" : "#0d0d18",
+                        color: sig.type === type ? "#50c8a0" : "#8888aa",
+                        border: `1px solid ${sig.type === type ? "#50c8a044" : "#3a3a5c"}`,
+                        padding: "2px 6px",
+                        textTransform: "uppercase",
+                        fontSize: 8,
+                        letterSpacing: "0.05em",
+                      }}>
+                        {type}
+                      </button>
+                    ))}
+                    <label style={{
+                      ...smallBtnStyle,
+                      background: sig.type === "pcm" ? "#50c8a022" : "#0d0d18",
+                      color: sig.type === "pcm" ? "#50c8a0" : "#8888aa",
+                      border: `1px solid ${sig.type === "pcm" ? "#50c8a044" : "#3a3a5c"}`,
+                      padding: "2px 6px",
+                      textTransform: "uppercase",
+                      fontSize: 8,
+                      cursor: "pointer",
+                    }}>
+                      PCM
+                      <input type="file" accept="audio/*" onChange={handlePCMUpload(idx)} style={{ display: "none" }} />
+                    </label>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Knob value={sig.frequency} min={20} max={2000} step={1} label="Freq (Hz)"
+                      onChange={(v) => updateSignal(idx, { frequency: v })} size={40} />
+                    <Knob value={sig.amplitude} min={0} max={1} step={0.01} label="Amplitude"
+                      onChange={(v) => updateSignal(idx, { amplitude: v })} size={40} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                 <button onClick={() => setIsStereo(!isStereo)} style={{
                   ...smallBtnStyle,
